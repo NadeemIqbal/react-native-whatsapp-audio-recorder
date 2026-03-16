@@ -143,33 +143,6 @@ npm run example:android  # Run on Android
 npm run example:ios      # Run on iOS
 ```
 
-## Publishing
-
-### GitHub
-
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/NadeemIqbal/react-native-whatsapp-audio-recorder.git
-git push -u origin main
-```
-
-### npm
-
-```bash
-# Login to npm (one-time)
-npm login
-
-# Bump version if needed
-npm version patch   # 1.0.0 -> 1.0.1
-# or
-npm version minor   # 1.0.0 -> 1.1.0
-
-# Publish to npm
-npm publish
-```
 
 ## License
 
