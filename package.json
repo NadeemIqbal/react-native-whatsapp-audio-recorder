@@ -7,13 +7,13 @@
   "files": [
     "src",
     "README.md",
-    "LICENSE",
-    "demo.gif"
+    "LICENSE"
   ],
   "scripts": {
     "example": "cd ExampleApp && npm start",
     "example:android": "cd ExampleApp && npm run android",
-    "example:ios": "cd ExampleApp && npm run ios"
+    "example:ios": "cd ExampleApp && npm run ios",
+    "publish:npm": "npm publish"
   },
   "keywords": [
     "react-native",
