@@ -1,0 +1,53 @@
+{
+  "name": "react-native-whatsapp-audio-recorder",
+  "version": "1.0.0",
+  "description": "WhatsApp-style audio recorder for React Native: slide to cancel, slide up to lock",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "demo.gif"
+  ],
+  "scripts": {
+    "example": "cd ExampleApp && npm start",
+    "example:android": "cd ExampleApp && npm run android",
+    "example:ios": "cd ExampleApp && npm run ios"
+  },
+  "keywords": [
+    "react-native",
+    "audio",
+    "recorder",
+    "whatsapp",
+    "voice-message",
+    "gesture",
+    "voice-note",
+    "slide-to-cancel"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NadeemIqbal/react-native-whatsapp-audio-recorder.git"
+  },
+  "homepage": "https://github.com/NadeemIqbal/react-native-whatsapp-audio-recorder#readme",
+  "bugs": {
+    "url": "https://github.com/NadeemIqbal/react-native-whatsapp-audio-recorder/issues"
+  },
+  "author": "Nadeem Iqbal <mr_nadeem_iqbal@yahoo.com>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*",
+    "react-native-gesture-handler": "*",
+    "react-native-reanimated": "*",
+    "react-native-nitro-sound": "*",
+    "react-native-blob-util": "*",
+    "react-native-vector-icons": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
