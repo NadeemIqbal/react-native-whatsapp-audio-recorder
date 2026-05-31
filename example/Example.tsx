@@ -34,6 +34,7 @@ const Example: React.FC = () => {
   const {
     recordingState,
     recordingDuration,
+    recordingDurationSV,
     isRecording,
     composedGesture,
     waveformAnims,
@@ -57,6 +58,7 @@ const Example: React.FC = () => {
       <AudioRecorderOverlay
         recordingState={recordingState}
         recordingDuration={recordingDuration}
+        recordingDurationSV={recordingDurationSV}
         waveformAnims={waveformAnims}
         panTranslationX={panTranslationX}
         panTranslationY={panTranslationY}
@@ -84,15 +86,15 @@ const Example: React.FC = () => {
       </View>
     );
 
+  // Keep the GestureDetector mounted across every state. The hook disables the
+  // pan while locked, so the locked stop/send/cancel buttons receive their taps
+  // and the detector is never torn down mid-gesture (unmounting it during the
+  // slide-up-to-lock left the gesture stuck until an app restart).
   return (
     <View style={styles.container}>
-      {recordingState === "locked" ? (
-        content
-      ) : (
-        <GestureDetector gesture={composedGesture}>
-          <View style={styles.gestureWrapper}>{content}</View>
-        </GestureDetector>
-      )}
+      <GestureDetector gesture={composedGesture}>
+        <View style={styles.gestureWrapper}>{content}</View>
+      </GestureDetector>
     </View>
   );
 };

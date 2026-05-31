@@ -1,5 +1,10 @@
 /**
  * Shared recording overlay UI for WhatsApp-style audio recorder.
+ *
+ * Everything that moves during a gesture is driven on the UI thread: the
+ * waveform heights, the cancel-color, the slide offset, the "slide up to lock" /
+ * "release to cancel" hint crossfade, and the recording timer (bound to a shared
+ * value via animated text). Recording therefore causes no per-frame React render.
  */
 import React, { memo, useMemo } from "react";
 import {
@@ -7,23 +12,29 @@ import {
   StyleSheet,
   Pressable,
   Text,
-  Animated as RNAnimated,
+  TextInput,
   type StyleProp,
   type ViewStyle,
   type TextStyle,
 } from "react-native";
 import Animated, {
   useAnimatedStyle,
+  useAnimatedProps,
   interpolate,
+  Extrapolation,
   type SharedValue,
 } from "react-native-reanimated";
 import MaterialIcons from "react-native-vector-icons/MaterialIcons";
 import type { RecordingState } from "./useWhatsAppAudioRecorder";
+import { formatDuration, formatDurationWorklet } from "./formatDuration";
 
 export interface AudioRecorderOverlayProps {
   recordingState: RecordingState;
+  /** Coarse (1 Hz) duration in ms, for non-animated consumers. */
   recordingDuration: number;
-  waveformAnims: RNAnimated.Value[];
+  /** UI-thread duration (ms) used to drive the timer without re-renders. */
+  recordingDurationSV: SharedValue<number>;
+  waveformAnims: SharedValue<number>[];
   panTranslationX: SharedValue<number>;
   panTranslationY: SharedValue<number>;
   slideCancelThreshold: number;
@@ -56,16 +67,77 @@ const DEFAULT_COLORS = {
   textMuted: "#8E8E93",
 };
 
+/** Style prop type accepted by reanimated's Animated.View (allows animated styles). */
+type AnimatedViewStyle = React.ComponentProps<typeof Animated.View>["style"];
+
+const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+
+/** Static reset so the animated TextInput lays out like a Text node. */
+const durationInputStyles = StyleSheet.create({
+  reset: {
+    padding: 0,
+    margin: 0,
+    includeFontPadding: false,
+  },
+});
+
+interface DurationTextProps {
+  sv: SharedValue<number>;
+  style: StyleProp<TextStyle>;
+}
+
+/**
+ * Recording timer rendered as an (uneditable) animated TextInput so its text is
+ * updated on the UI thread from `recordingDurationSV`, with zero React re-render.
+ */
+const DurationText: React.FC<DurationTextProps> = memo(({ sv, style }) => {
+  const animatedProps = useAnimatedProps(
+    () => ({ text: formatDurationWorklet(sv.value) }) as Partial<{ text: string }>,
+  );
+  return (
+    <AnimatedTextInput
+      editable={false}
+      pointerEvents="none"
+      underlineColorAndroid="transparent"
+      defaultValue={formatDuration(0)}
+      // @ts-expect-error `text` is a valid native TextInput prop driven by reanimated.
+      animatedProps={animatedProps}
+      style={[durationInputStyles.reset, style]}
+    />
+  );
+});
+
+interface WaveformBarProps {
+  anim: SharedValue<number>;
+  barStyle: StyleProp<ViewStyle>;
+  fillStyle: AnimatedViewStyle;
+}
+
+/**
+ * A single waveform bar. The height tween runs entirely on the UI thread via
+ * reanimated (the amplitude shared value is driven from the hook), so the
+ * waveform never blocks the JS thread during gesture handling.
+ */
+const WaveformBar: React.FC<WaveformBarProps> = memo(
+  ({ anim, barStyle, fillStyle }) => {
+    const heightStyle = useAnimatedStyle(() => ({
+      height: interpolate(anim.value, [0, 1], [4, 24]),
+    }));
+    return (
+      <Animated.View style={[barStyle, heightStyle]}>
+        <Animated.View style={[StyleSheet.absoluteFill, fillStyle]} />
+      </Animated.View>
+    );
+  },
+);
+
 const AudioRecorderOverlay: React.FC<AudioRecorderOverlayProps> = ({
   recordingState,
-  recordingDuration,
+  recordingDurationSV,
   waveformAnims,
   panTranslationX,
-  panTranslationY,
   slideCancelThreshold,
-  slideLockThreshold,
   isRTL,
-  formatDuration,
   onLockedCancel,
   onLockedStop,
   onLockedSend,
@@ -74,24 +146,28 @@ const AudioRecorderOverlay: React.FC<AudioRecorderOverlayProps> = ({
   style,
   textStyle,
 }) => {
-  const colors = { ...DEFAULT_COLORS, ...colorsProp };
+  // Memoize so `colors` keeps a stable identity and the StyleSheet is not
+  // rebuilt every render.
+  const colors = useMemo(
+    () => ({ ...DEFAULT_COLORS, ...colorsProp }),
+    [
+      colorsProp?.primary,
+      colorsProp?.cancel,
+      colorsProp?.background,
+      colorsProp?.text,
+      colorsProp?.textMuted,
+    ],
+  );
   const styles = useMemo(
     () => createStyles(colors, variant),
     [colors, variant],
   );
 
+  // Cancel progress (0 = recording, 1 = past cancel threshold), UI thread.
   const waveformColorStyle = useAnimatedStyle(() => {
     const cancelProgress = isRTL
-      ? interpolate(
-          panTranslationX.value,
-          [0, slideCancelThreshold],
-          [0, 1],
-        )
-      : interpolate(
-          panTranslationX.value,
-          [-slideCancelThreshold, 0],
-          [1, 0],
-        );
+      ? interpolate(panTranslationX.value, [0, slideCancelThreshold], [0, 1])
+      : interpolate(panTranslationX.value, [-slideCancelThreshold, 0], [1, 0]);
     return {
       backgroundColor: cancelProgress > 0.5 ? colors.cancel! : colors.primary!,
     };
@@ -114,7 +190,42 @@ const AudioRecorderOverlay: React.FC<AudioRecorderOverlayProps> = ({
     [isRTL],
   );
 
-  const inCancelMode = recordingState === "cancelMode";
+  // Crossfade the two hints on the UI thread so crossing the cancel threshold
+  // never depends on a React render.
+  const hintLockStyle = useAnimatedStyle(() => {
+    const p = isRTL
+      ? interpolate(
+          panTranslationX.value,
+          [0, slideCancelThreshold],
+          [0, 1],
+          Extrapolation.CLAMP,
+        )
+      : interpolate(
+          panTranslationX.value,
+          [-slideCancelThreshold, 0],
+          [1, 0],
+          Extrapolation.CLAMP,
+        );
+    return { opacity: 1 - p };
+  }, [slideCancelThreshold, isRTL]);
+
+  const hintCancelStyle = useAnimatedStyle(() => {
+    const p = isRTL
+      ? interpolate(
+          panTranslationX.value,
+          [0, slideCancelThreshold],
+          [0, 1],
+          Extrapolation.CLAMP,
+        )
+      : interpolate(
+          panTranslationX.value,
+          [-slideCancelThreshold, 0],
+          [1, 0],
+          Extrapolation.CLAMP,
+        );
+    return { opacity: p };
+  }, [slideCancelThreshold, isRTL]);
+
   const inLocked = recordingState === "locked";
 
   if (inLocked) {
@@ -122,31 +233,21 @@ const AudioRecorderOverlay: React.FC<AudioRecorderOverlayProps> = ({
       <View style={[styles.lockedOuter, style]}>
         <View style={styles.lockedWhiteBox}>
           <View style={styles.lockedTopRow}>
-            <Text style={[styles.timerText, { color: colors.cancel }, textStyle]}>
-              {formatDuration(recordingDuration)}
-            </Text>
+            <DurationText
+              sv={recordingDurationSV}
+              style={[styles.timerText, { color: colors.cancel }, textStyle]}
+            />
             <View style={styles.lockedWaveformContainer}>
               {waveformAnims.map((anim, i) => (
-                <RNAnimated.View
+                <WaveformBar
                   key={i}
-                  style={[
-                    styles.waveformBar,
-                    {
-                      height: anim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [4, 24],
-                      }),
-                    },
+                  anim={anim}
+                  barStyle={styles.waveformBar}
+                  fillStyle={[
+                    styles.waveformBarFill,
+                    { backgroundColor: colors.textMuted },
                   ]}
-                >
-                  <Animated.View
-                    style={[
-                      StyleSheet.absoluteFill,
-                      styles.waveformBarFill,
-                      { backgroundColor: colors.textMuted },
-                    ]}
-                  />
-                </RNAnimated.View>
+                />
               ))}
             </View>
           </View>
@@ -181,51 +282,49 @@ const AudioRecorderOverlay: React.FC<AudioRecorderOverlayProps> = ({
     <View style={[styles.recordingOverlay, style]}>
       <View style={styles.recordingIndicator}>
         <View style={[styles.recordingDot, { backgroundColor: colors.cancel }]} />
-        <Text style={[styles.timerText, { color: colors.cancel }, textStyle]}>
-          {formatDuration(recordingDuration)}
-        </Text>
+        <DurationText
+          sv={recordingDurationSV}
+          style={[styles.timerText, { color: colors.cancel }, textStyle]}
+        />
       </View>
 
       <Animated.View style={[styles.waveformContainer, slideIndicatorStyle]}>
         {waveformAnims.map((anim, i) => (
-          <RNAnimated.View
+          <WaveformBar
             key={i}
-            style={[
-              styles.waveformBar,
-              {
-                height: anim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [4, 24],
-                }),
-              },
-            ]}
-          >
-            <Animated.View
-              style={[
-                StyleSheet.absoluteFill,
-                styles.waveformBarFill,
-                waveformColorStyle,
-              ]}
-            />
-          </RNAnimated.View>
+            anim={anim}
+            barStyle={styles.waveformBar}
+            fillStyle={[styles.waveformBarFill, waveformColorStyle]}
+          />
         ))}
       </Animated.View>
 
-      {!inCancelMode && (
-        <Text
-          style={[styles.slideHint, { color: colors.textMuted }, textStyle]}
-        >
-          Slide up to lock
-        </Text>
-      )}
-
-      {inCancelMode && (
-        <Text
-          style={[styles.slideHint, { color: colors.cancel, fontWeight: "600" }, textStyle]}
+      <View style={styles.hintContainer}>
+        <Animated.Text
+          numberOfLines={1}
+          style={[
+            styles.slideHint,
+            styles.hintSizer,
+            { color: colors.cancel, fontWeight: "600" },
+            textStyle,
+            hintCancelStyle,
+          ]}
         >
           Release to Cancel
-        </Text>
-      )}
+        </Animated.Text>
+        <Animated.Text
+          numberOfLines={1}
+          style={[
+            styles.slideHint,
+            styles.hintAbsolute,
+            { color: colors.textMuted },
+            textStyle,
+            hintLockStyle,
+          ]}
+        >
+          Slide up to lock
+        </Animated.Text>
+      </View>
     </View>
   );
 };
@@ -286,9 +385,20 @@ const createStyles = (
     waveformBarFill: {
       borderRadius: 1.5,
     },
-    slideHint: {
+    hintContainer: {
       marginLeft: 4,
+      justifyContent: "center",
+    },
+    slideHint: {
       fontSize: 12,
+    },
+    hintSizer: {
+      // In-flow element that sizes the hint area (the longer of the two texts).
+    },
+    hintAbsolute: {
+      position: "absolute",
+      left: 0,
+      right: 0,
     },
     lockedOuter: {
       alignSelf: "stretch",

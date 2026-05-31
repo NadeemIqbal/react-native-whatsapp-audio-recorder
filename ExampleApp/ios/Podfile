@@ -31,5 +31,25 @@ target 'ExampleApp' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # fmt 11.0.2 (bundled by RN 0.79's Folly) hits a `consteval` compile error
+    # under the newer clang shipped with Xcode 16+/26 (a clang regression where
+    # fmt's compile-time format-string checks are rejected as non-constant).
+    # fmt's base.h hardcodes FMT_USE_CONSTEVAL with no `#ifndef` guard, so a
+    # -D define is ignored; patch the detection to take the disabled branch.
+    # Compile-time checks fall back to runtime - functionally inert.
+    fmt_base = File.join(installer.sandbox.root, 'fmt', 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base)
+      src = File.read(fmt_base)
+      patched = src.gsub(
+        "#elif defined(__cpp_consteval)\n#  define FMT_USE_CONSTEVAL 1\n#elif FMT_GCC_VERSION >= 1002 || FMT_CLANG_VERSION >= 1101\n#  define FMT_USE_CONSTEVAL 1",
+        "#elif 0  // consteval disabled: clang (Xcode 26) format-string consteval bug\n#  define FMT_USE_CONSTEVAL 1\n#elif 0\n#  define FMT_USE_CONSTEVAL 1"
+      )
+      if patched != src
+        File.chmod(0644, fmt_base)
+        File.write(fmt_base, patched)
+        Pod::UI.puts "[patch] fmt base.h: forced FMT_USE_CONSTEVAL=0".green
+      end
+    end
   end
 end

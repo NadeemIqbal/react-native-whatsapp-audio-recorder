@@ -20,6 +20,18 @@ WhatsApp-style audio recorder for React Native with **slide to cancel** and **sl
 - Animated waveform
 - Fully customizable overlay
 
+## Requirements
+
+This library runs its gesture, waveform, hint, and timer animations entirely on
+the UI thread via Reanimated worklets, so it targets the React Native **New
+Architecture (Fabric)**.
+
+- **React Native New Architecture (Fabric)** enabled
+- **react-native-reanimated v4** (v4 is New-Architecture only). v3 is the minimum
+  supported floor if you are still on the old architecture, but v4 is recommended.
+- **react-native-gesture-handler v2+**
+- **React 18+**, **React Native 0.72+**
+
 ## Installation
 
 ```bash
@@ -133,6 +145,30 @@ function ChatInput() {
 | `variant` | "chat" \| "standalone" | Layout style |
 | `colors` | object | Theme overrides |
 | `formatDuration` | (ms) => string | Duration formatter |
+
+## Performance / threading model
+
+All per-frame animation work runs on the UI thread, so the recorder stays glued
+to the finger at native refresh rate even when the JS thread is busy:
+
+- **Gesture state machine** lives inside the pan worklet. Direction detection,
+  cancel/lock thresholds, and the offset/lock-icon visuals are computed and
+  written on the UI thread every frame. There are zero `runOnJS` hops during a
+  continuous slide.
+- **State sync to React** happens only on discrete transitions (start, lock,
+  cancel, release) via a single `useAnimatedReaction`, so a slide does not
+  trigger per-frame re-renders.
+- **Waveform** is a self-scheduling UI-thread loop (each bar re-arms its own
+  `withTiming` in the completion callback). There is no JS `setInterval` driving
+  it, so a jammed JS thread cannot stutter it.
+- **Cancel hint** ("Slide up to lock" / "Release to Cancel") crossfades via
+  `useAnimatedStyle` opacity, so crossing the threshold costs no React render.
+- **Timer** is driven by a shared value rendered through an animated `TextInput`,
+  so the MM:SS ticks on the UI thread with no overlay re-render. The public
+  `recordingDuration` state still updates, but only once per whole second.
+
+Because every spring now runs on the UI thread, the single tuning point for feel
+is the lock/cancel spring (`damping: 15`, `stiffness: 200`).
 
 ## Development
 
